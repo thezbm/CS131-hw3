@@ -287,8 +287,16 @@ let compile_lbl_block fn lbl ctxt blk : elem =
 
    [ NOTE: the first six arguments are numbered 0 .. 5 ]
 *)
-let arg_loc (n : int) : operand =
-failwith "arg_loc not implemented"
+let arg_loc (n : int) : operand = match n with
+  | 0 -> Reg Rdi
+  | 1 -> Reg Rsi
+  | 2 -> Reg Rdx
+  | 3 -> Reg Rcx
+  | 4 -> Reg R08
+  | 5 -> Reg R09
+  | _ ->
+    let offset = (n - 6) * 8 + 16 in
+    Ind3 (Lit (Int64.of_int offset), Rbp)
 
 
 (* We suggest that you create a helper function that computes the
@@ -300,8 +308,8 @@ failwith "arg_loc not implemented"
    - see the discussion about locals
 
 *)
-let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
-failwith "stack_layout not implemented"
+let stack_layout (args : uid list) ((block, lbled_blocks) : cfg) : layout =
+  List.mapi (fun i arg -> arg, arg_loc i) args
 
 (* The code for the entry-point of a function must do several things:
 
@@ -319,7 +327,8 @@ failwith "stack_layout not implemented"
    - the function entry code should allocate the stack storage needed
      to hold all of the local stack slots.
 *)
-let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_param; f_cfg; _ }:fdecl) : prog =
+let compile_fdecl (tdecls : (tid * ty) list) (name : string) ({ f_param; f_cfg; _ } : fdecl) : prog =
+
   (* pretty print the input *)
   if debug_backend then begin
     Printf.printf "compiling function %s\n" name;
@@ -333,9 +342,20 @@ let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_param; f_cfg; _ }:
     Printf.printf "\n\n\n";
   end;
 
-failwith "compile_fdecl unimplemented"
-
-
+  let entry_block, lbled_blocks = f_cfg in
+  let context = {tdecls = tdecls; layout = stack_layout f_param f_cfg} in
+  (* In LLVMlite, there's no `internal` function definitions, so all
+     functions are treated as `global` labels in X86lite. *)
+  (* Entry block. *)
+  Asm.gtext name (
+    (* prolog (we don't use any other callee-saved registers so we don't save them here) *)
+    [ Pushq, [Reg Rbp];
+      Movq, [Reg Rsp; Reg Rbp];
+    ]
+    @ compile_block name context entry_block
+  )
+  (* Labeled blocks. *)
+  :: List.map (fun (lbl, block) -> compile_lbl_block name lbl context block) lbled_blocks
 
 (* compile_gdecl ------------------------------------------------------------ *)
 (* Compile a global value into an X86 global data declaration and map
