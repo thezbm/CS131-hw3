@@ -5,6 +5,8 @@ open X86
 
 module Platform = Util.Platform
 
+let debug_backend = true
+
 (* Overview ----------------------------------------------------------------- *)
 
 (* We suggest that you spend some time understanding this entire file and
@@ -318,6 +320,19 @@ failwith "stack_layout not implemented"
      to hold all of the local stack slots.
 *)
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_param; f_cfg; _ }:fdecl) : prog =
+  (* pretty print the input *)
+  if debug_backend then begin
+    Printf.printf "compiling function %s\n" name;
+    List.iter (fun x -> Printf.printf "  param: %s\n" x) f_param;
+    Printf.printf "  tdecls:\n";
+    List.iter (fun (x,y) -> Printf.printf "      %s -> %s\n" x (Llutil.sot y)) tdecls;
+    Printf.printf "  cfg:\n";
+    let (b, lbs) = f_cfg in
+    Printf.printf "    block:\n\n%s\n\n" (Llutil.string_of_block tdecls b);
+    List.iter (fun (lb, bl) -> Printf.printf "    label:%s\n\n%s\n\n" lb (Llutil.string_of_block tdecls bl)) lbs;
+    Printf.printf "\n\n\n";
+  end;
+
 failwith "compile_fdecl unimplemented"
 
 
@@ -338,7 +353,7 @@ and compile_gdecl (_, g) = compile_ginit g
 
 
 (* compile_prog ------------------------------------------------------------- *)
-let compile_prog {tdecls; gdecls; fdecls; _} : X86.prog =
+let compile_prog ({tdecls; gdecls; fdecls; _} : Ll.prog) : X86.prog =
   let g = fun (lbl, gdecl) -> Asm.data (Platform.mangle lbl) (compile_gdecl gdecl) in
   let f = fun (name, fdecl) -> compile_fdecl tdecls name fdecl in
   (List.map g gdecls) @ (List.map f fdecls |> List.flatten)
