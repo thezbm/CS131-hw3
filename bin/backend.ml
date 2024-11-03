@@ -5,7 +5,7 @@ open X86
 
 module Platform = Util.Platform
 
-let debug_backend = true
+let debug_backend = false
 
 (* Overview ----------------------------------------------------------------- *)
 
@@ -246,7 +246,7 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
 
 (* prefix the function name [fn] to a label to ensure that the X86 labels are 
    globally unique . *)
-let mk_lbl (fn:string) (l:string) = fn ^ "." ^ l
+let mk_lbl (fn : string) (l :string) = fn ^ "." ^ l
 
 (* Compile block terminators is not too difficult:
 
@@ -291,14 +291,10 @@ let compile_lbl_block fn lbl ctxt blk : elem =
 
    [ NOTE: the first six arguments are numbered 0 .. 5 ]
 *)
-let arg_loc (n : int) : operand = match n with
-  | 0 -> Reg Rdi
-  | 1 -> Reg Rsi
-  | 2 -> Reg Rdx
-  | 3 -> Reg Rcx
-  | 4 -> Reg R08
-  | 5 -> Reg R09
-  | _ ->
+let arg_loc (n : int) : operand =
+  if n < 6 then
+    Reg (List.nth [Rdi; Rsi; Rdx; Rcx; R08; R09] n)
+  else
     let offset = (n - 6) * 8 + 16 in
     Ind3 (Lit (Int64.of_int offset), Rbp)
 
@@ -313,7 +309,20 @@ let arg_loc (n : int) : operand = match n with
 
 *)
 let stack_layout (args : uid list) ((block, lbled_blocks) : cfg) : layout =
-  List.mapi (fun i arg -> arg, arg_loc i) args
+  let args_layout = List.mapi (fun i arg -> arg, arg_loc i) args in
+  let _, locals_layout =
+    List.fold_left (
+      fun (i, lyt) (uid, insn) -> match insn with
+        | Store _ | Call (Void, _ , _) -> (i, lyt)
+        | _ -> (i + 1, (uid, Ind3 (Lit (Int64.of_int(-8 * i)), Rbp)) :: lyt)
+    ) (1, []) (
+      block.insns @
+      (lbled_blocks
+      |> List.map (fun (_, b) -> b.insns)
+      |> List.flatten)
+    ) in
+  args_layout @ locals_layout
+
 
 (* The code for the entry-point of a function must do several things:
 
@@ -353,8 +362,10 @@ let compile_fdecl (tdecls : (tid * ty) list) (name : string) ({ f_param; f_cfg; 
   (* Entry block. *)
   Asm.gtext name (
     (* prolog (we don't use any other callee-saved registers so we don't save them here) *)
+    let stack_size = (List.length context.layout - List.length f_param) * 8 in
     [ Pushq, [Reg Rbp];
       Movq, [Reg Rsp; Reg Rbp];
+      Subq, [Imm (Lit (Int64.of_int stack_size)); Reg Rsp];
     ]
     @ compile_block name context entry_block
   )
@@ -381,3 +392,4 @@ let compile_prog ({tdecls; gdecls; fdecls; _} : Ll.prog) : X86.prog =
   let g = fun (lbl, gdecl) -> Asm.data (Platform.mangle lbl) (compile_gdecl gdecl) in
   let f = fun (name, fdecl) -> compile_fdecl tdecls name fdecl in
   (List.map g gdecls) @ (List.map f fdecls |> List.flatten)
+
