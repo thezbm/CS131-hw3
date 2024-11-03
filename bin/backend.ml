@@ -178,8 +178,13 @@ let compile_operand (ctxt : ctxt) (dest : X86.operand) : Ll.operand -> ins =
    - Void, i8, and functions have undefined sizes according to LLVMlite.
      Your function should simply return 0 in those cases
 *)
-let rec size_ty (tdecls:(tid * ty) list) (t:Ll.ty) : int =
-failwith "size_ty not implemented"
+let rec size_ty (tdecls : (tid * ty) list) (t : Ll.ty) : int =
+  match t with
+  | Void | I8 | Fun _ -> 0
+  | I1 | I64 | Ptr _ -> 8
+  | Struct ts -> List.fold_left (fun acc t -> acc + size_ty tdecls t) 0 ts
+  | Array (n, t) -> n * size_ty tdecls t
+  | Namedt tid -> size_ty tdecls (lookup tdecls tid)
 
 
 
