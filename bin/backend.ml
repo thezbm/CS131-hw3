@@ -265,9 +265,25 @@ let mk_lbl (fn : string) (l :string) = fn ^ "." ^ l
 
    [fn] - the name of the function containing this terminator
 *)
-let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
-  failwith "compile_terminator not implemented"
-
+let compile_terminator (fn : string) (ctxt : ctxt) (t : Ll.terminator) : ins list =
+  let mk_lbl = mk_lbl fn in
+  (* we don't use any other callee-saved registers so we don't restore them here *)
+  let epilog = [ Movq, [Reg Rbp; Reg Rsp]
+               ; Popq, [Reg Rbp]
+               ; Retq, [] ] in
+  match t with
+  | Ret (_, None)
+    -> epilog
+  | Ret (_, Some operand)
+    -> (compile_operand ctxt (Reg Rax) operand)
+       :: epilog
+  | Br lbl
+    -> [ Jmp, [Imm (Lbl (mk_lbl lbl))] ]
+  | Cbr (operand, lbl1, lbl2)
+    -> [ compile_operand ctxt (Reg Rax) operand
+       ; Cmpq, [Imm (Lit 1L); (Reg Rax)]
+       ; J Eq, [Imm (Lbl (mk_lbl lbl1))]
+       ; Jmp, [Imm (Lbl (mk_lbl lbl2))] ]
 
 (* compiling blocks --------------------------------------------------------- *)
 
