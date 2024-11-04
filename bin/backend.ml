@@ -185,6 +185,12 @@ let compile_operand (ctxt : ctxt) (dest : X86.operand) : Ll.operand -> ins =
   ]
 *)
 
+let arg_regs = [ Reg Rdi
+               ; Reg Rsi
+               ; Reg Rdx
+               ; Reg Rcx
+               ; Reg R08
+               ; Reg R09 ]
 
 
 
@@ -246,8 +252,8 @@ let rec size_ty (tdecls : (tid * ty) list) (t : Ll.ty) : int =
       in (4), but relative to the type f the sub-element picked out
       by the path so far
 *)
-let compile_gep (ctxt:ctxt) (op : Ll.ty * Ll.operand) (path: Ll.operand list) : ins list =
-failwith "compile_gep not implemented"
+let compile_gep (ctxt : ctxt) (op : Ll.ty * Ll.operand) (path : Ll.operand list) : ins list =
+  failwith "compile_gep not implemented"
 
 
 
@@ -299,7 +305,7 @@ let mk_lbl (fn : string) (l :string) = fn ^ "." ^ l
 *)
 let compile_terminator (fn : string) (ctxt : ctxt) (t : Ll.terminator) : ins list =
   let mk_lbl = mk_lbl fn in
-  (* we don't use any other callee-saved registers so we don't restore them here *)
+  (* We don't use any other callee-saved registers so we don't restore them here. *)
   let epilog = [ Movq, [Reg Rbp; Reg Rsp]
                ; Popq, [Reg Rbp]
                ; Retq, [] ] in
@@ -344,9 +350,10 @@ let compile_lbl_block fn lbl ctxt blk : elem =
 
    [ NOTE: the first six arguments are numbered 0 .. 5 ]
 *)
+(* Note: this function is here only to satisfy some test cases. *)
 let arg_loc (n : int) : operand =
   if n < 6 then
-    Reg (List.nth [Rdi; Rsi; Rdx; Rcx; R08; R09] n)
+    List.nth arg_regs n
   else
     let offset = (n - 6) * 8 + 16 in
     Ind3 (Lit (Int64.of_int offset), Rbp)
@@ -361,18 +368,46 @@ let arg_loc (n : int) : operand =
    - see the discussion about locals
 
 *)
+(* Note: we only copy function arguments in registers to stack.
+
+   function frame:
+
+          --------------------
+         |        ...         |
+         |       arg 7        |
+         |       arg 6        |
+         |     saved rip      |
+         |     saved rsp      |
+   rbp -> --------------------
+         |     arg 0 copy     |
+         |        ...         |
+         |     arg 5 copy     |
+         |      local %1      |
+         |      local %2      |
+         |        ...         |
+          --------------------
+*)
 let stack_layout (args : uid list) ((block, lbled_blocks) : cfg) : layout =
-  let args_layout = List.mapi (fun i arg -> arg, arg_loc i) args in
-  let _, locals_layout =
+  let args_layout =
+    List.mapi (
+      fun i arg ->
+        arg,
+        let offset = if i < 6 then -8 - i * 8 else (i - 6) * 8 + 16 in
+          Ind3 (Lit (Int64.of_int offset), Rbp)
+    ) args
+  and _, locals_layout =
     List.fold_left (
       fun (i, lyt) (uid, insn) -> match insn with
-        | Store _ | Call (Void, _ , _) -> (i, lyt)
-        | _ -> (i + 1, (uid, Ind3 (Lit (Int64.of_int(-8 * i)), Rbp)) :: lyt)
+        | Store _ | Call (Void, _ , _)
+          -> i, lyt
+        | _
+          -> let local_offset = - 8 * (i + List.length arg_regs) in
+             i + 1, (uid, Ind3 (Lit (Int64.of_int local_offset), Rbp)) :: lyt
     ) (1, []) (
       block.insns @
       (lbled_blocks
-      |> List.map (fun (_, b) -> b.insns)
-      |> List.flatten)
+        |> List.map (fun (_, b) -> b.insns)
+        |> List.flatten)
     ) in
   args_layout @ locals_layout
 
@@ -414,12 +449,12 @@ let compile_fdecl (tdecls : (tid * ty) list) (name : string) ({ f_param; f_cfg; 
      functions are treated as `global` labels in X86lite. *)
   (* Entry block. *)
   Asm.gtext name (
-    (* prolog (we don't use any other callee-saved registers so we don't save them here) *)
-    let stack_size = (List.length context.layout - List.length f_param) * 8 in
-    [ Pushq, [Reg Rbp];
-      Movq, [Reg Rsp; Reg Rbp];
-      Subq, [Imm (Lit (Int64.of_int stack_size)); Reg Rsp];
-    ]
+    (* Prolog. We don't use any other callee-saved registers so we don't save them here. *)
+    [ Pushq, [Reg Rbp]
+    ; Movq, [Reg Rsp; Reg Rbp] ]
+    @ (compile_save_regs arg_regs) @
+    [ let local_stack_size = (List.length context.layout - List.length f_param) * 8 in
+      Subq, [Imm (Lit (Int64.of_int local_stack_size)); Reg Rsp] ]
     @ compile_block name context entry_block
   )
   (* Labeled blocks. *)
