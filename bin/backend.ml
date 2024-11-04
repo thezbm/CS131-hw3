@@ -65,6 +65,38 @@ type ctxt = { tdecls : (tid * ty) list
 (* useful for looking up items in tdecls or layouts *)
 let lookup m x = List.assoc x m
 
+let caller_saved = [ Reg Rax
+                   ; Reg Rcx
+                   ; Reg Rdx
+                   ; Reg Rsi
+                   ; Reg Rdi
+                   ; Reg R08
+                   ; Reg R09
+                   ; Reg R10
+                   ; Reg R11 ]
+
+let callee_saved = [ Reg Rbx
+                   ; Reg Rbp
+                   ; Reg R12
+                   ; Reg R13
+                   ; Reg R14
+                   ; Reg R15 ]
+
+exception Not_a_regster
+
+let compile_save_regs (regs : X86.operand list) : X86.ins list =
+  List.map
+    (function
+      | Reg r -> Pushq, [Reg r]
+      | _ -> raise Not_a_regster)
+    regs
+
+let compile_restore_regs (regs : X86.operand list) : X86.ins list =
+  List.rev_map
+    (function
+      | Reg r -> Popq, [Reg r]
+      | _ -> raise Not_a_regster)
+    regs
 
 (* compiling operands  ------------------------------------------------------ *)
 
