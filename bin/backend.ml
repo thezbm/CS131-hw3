@@ -335,7 +335,9 @@ let compile_insn (ctxt : ctxt) ((uid : uid), (i : Ll.insn)) : X86.ins list =
     [
       compile_operand a op1;
       compile_operand b op2;
-      Cmpq, [a; b];
+      (* `cmpq b a` uses `subq a b` to compare *)
+      Cmpq, [b; a];
+      (* Zero a first so `setb cc a` sets a to 0 or 1; movq doesn't modify flags. *)
       Movq, [Imm (Lit 0L); a];
       Set (compile_cnd cnd), [a];
       Movq, [a; dest]
