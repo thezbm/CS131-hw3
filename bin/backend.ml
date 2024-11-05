@@ -461,7 +461,7 @@ let arg_loc (n : int) : operand =
          |       arg 7        |
          |       arg 6        |
          |     saved rip      |
-         |     saved rsp      |
+         |     saved rbp      |
    rbp -> --------------------
          |     arg 0 copy     |
          |        ...         |
