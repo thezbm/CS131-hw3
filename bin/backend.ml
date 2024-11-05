@@ -5,8 +5,6 @@ open X86
 
 module Platform = Util.Platform
 
-let debug_backend = false
-
 (* Overview ----------------------------------------------------------------- *)
 
 (* We suggest that you spend some time understanding this entire file and
@@ -513,20 +511,6 @@ let stack_layout (args : uid list) ((block, lbled_blocks) : cfg) : layout =
      to hold all of the local stack slots.
 *)
 let compile_fdecl (tdecls : (tid * ty) list) (name : string) ({ f_param; f_cfg; _ } : fdecl) : prog =
-
-  (* pretty print the input *)
-  if debug_backend then begin
-    Printf.printf "compiling function %s\n" name;
-    List.iter (fun x -> Printf.printf "  param: %s\n" x) f_param;
-    Printf.printf "  tdecls:\n";
-    List.iter (fun (x,y) -> Printf.printf "      %s -> %s\n" x (Llutil.sot y)) tdecls;
-    Printf.printf "  cfg:\n";
-    let (b, lbs) = f_cfg in
-    Printf.printf "    block:\n\n%s\n\n" (Llutil.string_of_block tdecls b);
-    List.iter (fun (lb, bl) -> Printf.printf "    label:%s\n\n%s\n\n" lb (Llutil.string_of_block tdecls bl)) lbs;
-    Printf.printf "\n\n\n";
-  end;
-
   let entry_block, lbled_blocks = f_cfg in
   let context = {tdecls = tdecls; layout = stack_layout f_param f_cfg} in
   (* In LLVMlite, there's no `internal` function definitions, so all
