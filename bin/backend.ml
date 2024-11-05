@@ -148,40 +148,40 @@ let compile_operand (ctxt : ctxt) (dest : X86.operand) : Ll.operand -> ins =
 
    [ NOTE: Don't forget to preserve caller-save registers (only if needed). ]
 
-   [ NOTE: Remember, call can use labels as immediates! You shouldn't need to 
+   [ NOTE: Remember, call can use labels as immediates! You shouldn't need to
      perform any RIP-relative addressing for this one. ]
 
    [ NOTE: It is the caller's responsibility to clean up arguments pushed onto
-     the stack, so you must free the stack space after the call returns. (But 
+     the stack, so you must free the stack space after the call returns. (But
      see below about alignment.) ]
 
-   [ NOTE: One important detail about the ABI besides the conventions is that, 
-  at the time the [callq] instruction is invoked, %rsp *must* be 16-byte aligned.  
+   [ NOTE: One important detail about the ABI besides the conventions is that,
+  at the time the [callq] instruction is invoked, %rsp *must* be 16-byte aligned.
   However, because LLVM IR provides the Alloca instruction, which can dynamically
   allocate space on the stack, it is hard to know statically whether %rsp meets
-  this alignment requirement.  Moroever: since, according to the calling 
+  this alignment requirement.  Moroever: since, according to the calling
   conventions, stack arguments numbered > 6 are pushed to the stack, we must take
-  that into account when enforcing the alignment property.  
+  that into account when enforcing the alignment property.
 
-  We suggest that, for a first pass, you *ignore* %rsp alignment -- only a few of 
+  We suggest that, for a first pass, you *ignore* %rsp alignment -- only a few of
   the test cases rely on this behavior.  Once you have everything else working,
-  you can enforce proper stack alignment at the call instructions by doing 
-  these steps: 
+  you can enforce proper stack alignment at the call instructions by doing
+  these steps:
     1. *before* pushing any arguments of the call to the stack, ensure that the
     %rsp is 16-byte aligned.  You can achieve that with the x86 instruction:
-    `andq $-16, %rsp`  (which zeros out the lower 4 bits of %rsp, possibly 
+    `andq $-16, %rsp`  (which zeros out the lower 4 bits of %rsp, possibly
     "allocating" unused padding space on the stack)
 
     2. if there are an *odd* number of arguments that will be pushed to the stack
     (which would break the 16-byte alignment because stack slots are 8 bytes),
-    allocate an extra 8 bytes of padding on the stack. 
-    
+    allocate an extra 8 bytes of padding on the stack.
+
     3. follow the usual calling conventions - any stack arguments will still leave
     %rsp 16-byte aligned
 
     4. after the call returns, in addition to freeing up the stack slots used by
-    arguments, if there were an odd number of slots, also free the extra padding. 
-    
+    arguments, if there were an odd number of slots, also free the extra padding.
+
   ]
 *)
 
@@ -192,6 +192,8 @@ let arg_regs = [ Reg Rdi
                ; Reg R08
                ; Reg R09 ]
 
+let compile_call (ctxt : ctxt) (fop, fargs : Ll.operand * (ty * Ll.operand) list) : X86.ins list =
+  failwith "compile_call not implemented"
 
 
 (* compiling getelementptr (gep)  ------------------------------------------- *)
@@ -280,14 +282,94 @@ let compile_gep (ctxt : ctxt) (op : Ll.ty * Ll.operand) (path : Ll.operand list)
 
    - Bitcast: does nothing interesting at the assembly level
 *)
-let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
-      failwith "compile_insn not implemented"
+let compile_insn (ctxt : ctxt) ((uid : uid), (i : Ll.insn)) : X86.ins list =
+  let compile_operand = compile_operand ctxt
+  and lookup = lookup ctxt.layout in
+  match i with
 
+  | Binop (bop, _, op1, op2) ->
+    let a = Reg Rax and b = Reg Rcx in
+    let dest = lookup uid in
+    begin
+      [ compile_operand a op1
+      ; compile_operand b op2 ]
+      @ (match bop with
+        | Add  -> [Addq,  [b; a]]
+        | Sub  -> [Subq,  [b; a]]
+        | Mul  -> [Imulq, [b; a]]
+        | And  -> [Andq,  [b; a]]
+        | Or   -> [Orq,   [b; a]]
+        | Xor  -> [Xorq,  [b; a]]
+        | Shl  -> [Shlq,  [b; a]]
+        | Lshr -> [Shrq,  [b; a]]
+        | Ashr -> [Sarq,  [b; a]]) @
+      [ Movq, [a; dest] ]
+    end
 
+  | Alloca ty ->
+    let size = size_ty ctxt.tdecls ty in
+    let dest = lookup uid in
+    [
+      Subq, [Imm (Lit (Int64.of_int size)); Reg Rsp];
+      Movq, [Reg Rsp; dest]
+    ]
+
+  (* TODO: error handling *)
+  | Load (_, op) ->
+    let dest = lookup uid in
+    [
+      compile_operand (Reg Rax) op;
+      Movq, [Ind2 Rax; Reg Rax];
+      Movq, [Reg Rax; dest]
+    ]
+
+  (* TODO: error handling *)
+  | Store (_, op1, op2) ->
+    [
+      compile_operand (Reg Rax) op1;
+      compile_operand (Reg Rcx) op2;
+      Movq, [Reg Rax; Ind2 Rcx];
+    ]
+
+  | Icmp (cnd, _, op1, op2) ->
+    let a = Reg Rax and b = Reg Rcx in
+    let dest = lookup uid in
+    [
+      compile_operand a op1;
+      compile_operand b op2;
+      Cmpq, [a; b];
+      Movq, [Imm (Lit 0L); a];
+      Set (compile_cnd cnd), [a];
+      Movq, [a; dest]
+    ]
+
+  (* TODO: error handling *)
+  | Call (Void, fop, fargs) ->
+    compile_call ctxt (fop, fargs)
+
+  (* TODO: error handling *)
+  | Call (_, fop, fargs) ->
+    let dest = lookup uid in
+    (* Assume compile_call puts the return value in rax. *)
+    compile_call ctxt (fop, fargs)
+    @ [Movq, [Reg Rax; dest]]
+
+  | Bitcast (_, op, _) ->
+    let dest = lookup uid in
+    [
+      compile_operand (Reg Rax) op;
+      Movq, [Reg Rax; dest]
+    ]
+
+  | Gep (ty, op, path) ->
+    let dest = lookup uid in
+    (* Assume compile_gep puts the result pointer in rax. *)
+    compile_gep ctxt (ty, op) path
+    @ [Movq, [Reg Rax; dest]]
 
 (* compiling terminators  --------------------------------------------------- *)
 
-(* prefix the function name [fn] to a label to ensure that the X86 labels are 
+(* prefix the function name [fn] to a label to ensure that the X86 labels are
    globally unique . *)
 let mk_lbl (fn : string) (l :string) = fn ^ "." ^ l
 
@@ -325,13 +407,15 @@ let compile_terminator (fn : string) (ctxt : ctxt) (t : Ll.terminator) : ins lis
 
 (* compiling blocks --------------------------------------------------------- *)
 
-(* We have left this helper function here for you to complete. 
+(* We have left this helper function here for you to complete.
    [fn] - the name of the function containing this block
    [ctxt] - the current context
    [blk]  - LLVM IR code for the block
 *)
-let compile_block (fn:string) (ctxt:ctxt) (blk:Ll.block) : ins list =
-  failwith "compile_block not implemented"
+let compile_block (fn : string) (ctxt : ctxt) (blk : Ll.block) : ins list =
+  (blk.insns |> List.map (compile_insn ctxt) |> List.flatten) @
+  compile_terminator fn ctxt (snd blk.term)
+
 
 let compile_lbl_block fn lbl ctxt blk : elem =
   Asm.text (mk_lbl fn lbl) (compile_block fn ctxt blk)
