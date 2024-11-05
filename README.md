@@ -10,8 +10,6 @@ Quick Start:
 See the general toolchain and project instructions on the course web site. The
 course web pages have a link to the html version of the homework instructions.
 
-NOTE: you may need to give execute permission to `bin/timeout3` after cloning the repo.
-
 Using ``oatc``
 --------------
 oatc acts like the clang compiler.  Given several .ll, .c, and .o
