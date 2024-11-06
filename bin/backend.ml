@@ -198,9 +198,17 @@ let compile_call
     | _ -> raise Function_not_gid
   in
 
+  let stack_args_n = max (List.length fargs - 6) 0 in
+
   let compile_operand = compile_operand ctxt in
 
   ( compile_save_regs caller_saved )
+  @
+  (* Save rsp to rbx (callee-saved) and do the alignment. *)
+  [ Movq, [Reg Rsp; Reg Rbx]
+  ; Andq, [imm_of_int (-16); Reg Rsp] ]
+  @
+  if stack_args_n mod 2 = 1 then [Subq, [imm_of_int 8; Reg Rsp]] else []
   @
   (* Prepare function args. *)
   ( fargs
@@ -218,8 +226,9 @@ let compile_call
     | Void -> []
     | _ -> [Movq, [Reg Rax; lookup ctxt.layout uid]] )
   @
-  let reg_args_stack_size = (max (List.length fargs - 6) 0) * 8 in
-    [ Addq, [imm_of_int reg_args_stack_size; Reg Rsp] ]
+  (* Restore rsp before alignment.
+     It also saves us the effort to clear the args pushed to stack. *)
+  [ Movq, [Reg Rbx; Reg Rsp] ]
   @
   ( compile_restore_regs caller_saved )
 
