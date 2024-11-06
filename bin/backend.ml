@@ -210,7 +210,6 @@ let compile_call
 
   let compile_operand = compile_operand ctxt in
 
-  (* Copy register args to stack. *)
   ( compile_save_regs caller_saved )
   @
   ( fargs
@@ -614,6 +613,7 @@ let compile_fdecl (tdecls : (tid * ty) list) (name : string) ({ f_param; f_cfg; 
     (* Prolog. We don't use any other callee-saved registers so we don't save them here. *)
     [ Pushq, [Reg Rbp]
     ; Movq, [Reg Rsp; Reg Rbp] ]
+    (* Copy register args to stack. *)
     @ (compile_save_regs arg_regs) @
     [ let local_stack_size = (List.length context.layout - List.length f_param) * 8 in
       Subq, [imm_of_int local_stack_size; Reg Rsp] ]
