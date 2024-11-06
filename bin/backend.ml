@@ -277,13 +277,67 @@ let rec size_ty (tdecls : (tid * ty) list) (t : Ll.ty) : int =
        value determines the offset within the array.
 
      - if t is any other type, the path is invalid
-
+   TODO: validity check
    5. if the index is valid, the remainder of the path is computed as
       in (4), but relative to the type f the sub-element picked out
       by the path so far
 *)
-let compile_gep (ctxt : ctxt) (op : Ll.ty * Ll.operand) (path : Ll.operand list) : ins list =
-  failwith "compile_gep not implemented"
+
+exception Invalid_gep_base
+exception Invalid_gep_path
+exception Invalid_gep_const_index
+
+let compile_gep (ctxt : ctxt) (t, base : Ll.ty * Ll.operand) (path : Ll.operand list) : ins list =
+
+  let rec compile_get_offset (t : Ll.ty) (path : Ll.operand list) : ins list =
+    match path with
+    | [] -> []
+    | index :: path ->
+      let rec compile_get_new_offset t =
+        let int_of_const_index = function
+          | Const index -> Int64.to_int index
+          | _ -> raise Invalid_gep_const_index
+        and mul_reg = Reg Rcx
+        and offset_reg = Reg Rax
+        in
+        match t with
+        | Ptr ty ->
+          [ compile_operand ctxt mul_reg index
+          ; Imulq, [imm_of_int (size_ty ctxt.tdecls ty); mul_reg]
+          ; Addq, [mul_reg; offset_reg]
+          ] @ compile_get_offset ty path
+        | Array (_, ty) ->
+          [ compile_operand ctxt mul_reg index
+          ; Imulq, [imm_of_int (size_ty ctxt.tdecls ty); mul_reg]
+          ; Addq, [mul_reg; offset_reg]
+          ] @ compile_get_offset ty path
+        | Struct ty_list ->
+          let index = int_of_const_index index in
+          let get_partial_offset =
+            List.fold_left
+            (fun (offset, i) ty -> offset + (if i < index then size_ty ctxt.tdecls ty else 0), i + 1)
+            (0, 0) in
+          let partial_offset = ty_list |> get_partial_offset |> fst in
+          [ Addq, [imm_of_int partial_offset; offset_reg]
+          ] @ compile_get_offset (List.nth ty_list index) path
+        | Namedt tid ->
+          compile_get_new_offset (lookup ctxt.tdecls tid)
+        | _ -> raise Invalid_gep_path
+      in
+      compile_get_new_offset t
+  in
+
+  (* Put the base ptr to rax. *)
+  ( match base with
+    | Gid gid ->
+      Leaq, [Ind3 (Lbl (Platform.mangle gid), Rip); Reg Rax]
+    | Id uid ->
+      Movq, [lookup ctxt.layout uid; Reg Rax]
+    | _ -> raise Invalid_gep_base )
+  ::
+  (* Add the offset to rax. *)
+  compile_get_offset t path
+
 
 
 
