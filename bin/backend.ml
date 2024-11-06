@@ -195,32 +195,43 @@ let arg_regs = [ Reg Rdi
 
 exception Function_not_gid
 
-let compile_call (ctxt : ctxt) (uid : uid option) (fop, fargs : Ll.operand * (ty * Ll.operand) list) : X86.ins list =
+let compile_call
+  (ctxt : ctxt)
+  (ty : Ll.ty)
+  (uid : Ll.uid)
+  (fop, fargs : Ll.operand * (ty * Ll.operand) list)
+  : X86.ins list
+  =
+
+  let flbl = match fop with
+    | Gid gid -> gid
+    | _ -> raise Function_not_gid
+  in
+
   let compile_operand = compile_operand ctxt in
-    (* Copy register args to stack. *)
-    ( compile_save_regs caller_saved )
-    @
-    ( fargs
-      |> List.mapi (fun i (_, farg) ->
-          if i < 6 then
-            [compile_operand (List.nth arg_regs i) farg]
-          else
-            [compile_operand (Reg Rax) farg; Pushq, [Reg Rax]])
-      |> List.rev
-      |> List.flatten )
-    @
-    ( match fop with
-      | Gid gid -> [Callq, [Imm (Lbl (Platform.mangle gid))]]
-      | _ -> raise Function_not_gid )
-    @
-    ( match uid with
-      | Some uid -> [Movq, [Reg Rax; lookup ctxt.layout uid]]
-      | None -> [] )
-    @
-    let reg_args_stack_size = (max (List.length fargs - 6) 0) * 8 in
-      [ Addq, [imm_of_int reg_args_stack_size; Reg Rsp] ]
-    @
-    ( compile_restore_regs caller_saved )
+
+  (* Copy register args to stack. *)
+  ( compile_save_regs caller_saved )
+  @
+  ( fargs
+    |> List.mapi (fun i (_, farg) ->
+        if i < 6 then
+          [compile_operand (List.nth arg_regs i) farg]
+        else
+          [compile_operand (Reg Rax) farg; Pushq, [Reg Rax]])
+    |> List.rev
+    |> List.flatten )
+  @
+  [Callq, [Imm (Lbl (Platform.mangle flbl))]]
+  @
+  ( match ty with
+    | Void -> []
+    | _ -> [Movq, [Reg Rax; lookup ctxt.layout uid]] )
+  @
+  let reg_args_stack_size = (max (List.length fargs - 6) 0) * 8 in
+    [ Addq, [imm_of_int reg_args_stack_size; Reg Rsp] ]
+  @
+  ( compile_restore_regs caller_saved )
 
 
 
@@ -432,12 +443,9 @@ let compile_insn (ctxt : ctxt) ((uid : uid), (i : Ll.insn)) : X86.ins list =
     ; Movq, [a; dest]
     ]
 
-  | Call (Void, fop, fargs) ->
-    compile_call ctxt None (fop, fargs)
-
-  | Call (_, fop, fargs) ->
-    (* compile_call puts the return value in dest. *)
-    compile_call ctxt (Some uid) (fop, fargs)
+  | Call (ty, fop, fargs) ->
+    (* compile_call puts the return value in dest if necessary. *)
+    compile_call ctxt ty uid (fop, fargs)
 
   | Bitcast (_, op, _) ->
     let dest = lookup uid in
