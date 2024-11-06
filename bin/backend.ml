@@ -64,38 +64,28 @@ type ctxt = { tdecls : (tid * ty) list
 (* useful for looking up items in tdecls or layouts *)
 let lookup m x = List.assoc x m
 
-let caller_saved = [ Reg Rax
-                   ; Reg Rcx
-                   ; Reg Rdx
-                   ; Reg Rsi
-                   ; Reg Rdi
-                   ; Reg R08
-                   ; Reg R09
-                   ; Reg R10
-                   ; Reg R11 ]
+let caller_saved = [ Rax
+                   ; Rcx
+                   ; Rdx
+                   ; Rsi
+                   ; Rdi
+                   ; R08
+                   ; R09
+                   ; R10
+                   ; R11 ]
 
-let callee_saved = [ Reg Rbx
-                   ; Reg Rbp
-                   ; Reg R12
-                   ; Reg R13
-                   ; Reg R14
-                   ; Reg R15 ]
+let callee_saved = [ Rbx
+                   ; Rbp
+                   ; R12
+                   ; R13
+                   ; R14
+                   ; R15 ]
 
-exception Not_a_regster
+let compile_save_regs (regs : reg list) : X86.ins list =
+  regs |> List.map (fun r -> Pushq, [Reg r])
 
-let compile_save_regs (regs : X86.operand list) : X86.ins list =
-  List.map
-    (function
-      | Reg r -> Pushq, [Reg r]
-      | _ -> raise Not_a_regster)
-    regs
-
-let compile_restore_regs (regs : X86.operand list) : X86.ins list =
-  List.rev_map
-    (function
-      | Reg r -> Popq, [Reg r]
-      | _ -> raise Not_a_regster)
-    regs
+let compile_restore_regs (regs : reg list) : X86.ins list =
+  regs |> List.rev_map (fun r -> Popq, [Reg r])
 
 (* compiling operands  ------------------------------------------------------ *)
 
@@ -186,12 +176,12 @@ let compile_operand (ctxt : ctxt) (dest : X86.operand) : Ll.operand -> ins =
   ]
 *)
 
-let arg_regs = [ Reg Rdi
-               ; Reg Rsi
-               ; Reg Rdx
-               ; Reg Rcx
-               ; Reg R08
-               ; Reg R09 ]
+let arg_regs = [ Rdi
+               ; Rsi
+               ; Rdx
+               ; Rcx
+               ; R08
+               ; R09 ]
 
 exception Function_not_gid
 
@@ -212,10 +202,11 @@ let compile_call
 
   ( compile_save_regs caller_saved )
   @
+  (* Prepare function args. *)
   ( fargs
     |> List.mapi (fun i (_, farg) ->
         if i < 6 then
-          [compile_operand (List.nth arg_regs i) farg]
+          [compile_operand (Reg (List.nth arg_regs i)) farg]
         else
           [compile_operand (Reg Rax) farg; Pushq, [Reg Rax]])
     |> List.rev
@@ -528,7 +519,7 @@ let compile_lbl_block fn lbl ctxt blk : elem =
 (* Note: this function is here only to satisfy some test cases. *)
 let arg_loc (n : int) : operand =
   if n < 6 then
-    List.nth arg_regs n
+    Reg (List.nth arg_regs n)
   else
     let offset = (n - 6) * 8 + 16 in
     Ind3 (Lit (Int64.of_int offset), Rbp)
