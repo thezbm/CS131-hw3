@@ -364,9 +364,18 @@ let compile_gep (ctxt : ctxt) (t, base : Ll.ty * Ll.operand) (path : Ll.operand 
 
    - Bitcast: does nothing interesting at the assembly level
 *)
+
+exception Invalid_ptr
+
 let compile_insn (ctxt : ctxt) ((uid : uid), (i : Ll.insn)) : X86.ins list =
+
+  let assert_ptr_not_null = function
+  | Null -> raise Invalid_ptr
+  | _ -> () in
+
   let compile_operand = compile_operand ctxt
   and lookup = lookup ctxt.layout in
+
   match i with
 
   | Binop (bop, _, op1, op2) ->
@@ -391,63 +400,56 @@ let compile_insn (ctxt : ctxt) ((uid : uid), (i : Ll.insn)) : X86.ins list =
   | Alloca ty ->
     let size = size_ty ctxt.tdecls ty in
     let dest = lookup uid in
-    [
-      Subq, [imm_of_int size; Reg Rsp];
-      Movq, [Reg Rsp; dest]
+    [ Subq, [imm_of_int size; Reg Rsp]
+    ; Movq, [Reg Rsp; dest]
     ]
 
-  (* TODO: error handling *)
   | Load (_, op) ->
+    assert_ptr_not_null op;
     let dest = lookup uid in
-    [
-      compile_operand (Reg Rax) op;
-      Movq, [Ind2 Rax; Reg Rax];
-      Movq, [Reg Rax; dest]
+    [ compile_operand (Reg Rax) op
+    ; Movq, [Ind2 Rax; Reg Rax]
+    ; Movq, [Reg Rax; dest]
     ]
 
-  (* TODO: error handling *)
   | Store (_, op1, op2) ->
-    [
-      compile_operand (Reg Rax) op1;
-      compile_operand (Reg Rcx) op2;
-      Movq, [Reg Rax; Ind2 Rcx];
+    assert_ptr_not_null op2;
+    [ compile_operand (Reg Rax) op1
+    ; compile_operand (Reg Rcx) op2
+    ; Movq, [Reg Rax; Ind2 Rcx]
     ]
 
   | Icmp (cnd, _, op1, op2) ->
     let a = Reg Rax and b = Reg Rcx in
     let dest = lookup uid in
-    [
-      compile_operand a op1;
-      compile_operand b op2;
+    [ compile_operand a op1
+    ; compile_operand b op2
       (* `cmpq b a` uses `subq a b` to compare *)
-      Cmpq, [b; a];
+    ; Cmpq, [b; a]
       (* Zero a first so `setb cc a` sets a to 0 or 1; movq doesn't modify flags. *)
-      Movq, [Imm (Lit 0L); a];
-      Set (compile_cnd cnd), [a];
-      Movq, [a; dest]
+    ; Movq, [Imm (Lit 0L); a]
+    ; Set (compile_cnd cnd), [a]
+    ; Movq, [a; dest]
     ]
 
-  (* TODO: error handling *)
   | Call (Void, fop, fargs) ->
     compile_call ctxt None (fop, fargs)
 
-  (* TODO: error handling *)
   | Call (_, fop, fargs) ->
     (* compile_call puts the return value in dest. *)
     compile_call ctxt (Some uid) (fop, fargs)
 
   | Bitcast (_, op, _) ->
     let dest = lookup uid in
-    [
-      compile_operand (Reg Rax) op;
-      Movq, [Reg Rax; dest]
+    [ compile_operand (Reg Rax) op
+    ; Movq, [Reg Rax; dest]
     ]
 
   | Gep (ty, op, path) ->
     let dest = lookup uid in
     (* compile_gep puts the result pointer in rax. *)
     compile_gep ctxt (ty, op) path
-    @ [Movq, [Reg Rax; dest]]
+    @ [ Movq, [Reg Rax; dest] ]
 
 (* compiling terminators  --------------------------------------------------- *)
 
