@@ -24,6 +24,7 @@ let compile_cnd = function
   | Ll.Sgt -> X86.Gt
   | Ll.Sge -> X86.Ge
 
+let imm_of_int i = Imm (Lit (Int64.of_int i))
 
 
 (* locals and layout -------------------------------------------------------- *)
@@ -170,6 +171,7 @@ let compile_operand (ctxt : ctxt) (dest : X86.operand) : Ll.operand -> ins =
     `andq $-16, %rsp`  (which zeros out the lower 4 bits of %rsp, possibly
     "allocating" unused padding space on the stack)
 
+    TODO:
     2. if there are an *odd* number of arguments that will be pushed to the stack
     (which would break the 16-byte alignment because stack slots are 8 bytes),
     allocate an extra 8 bytes of padding on the stack.
@@ -177,6 +179,7 @@ let compile_operand (ctxt : ctxt) (dest : X86.operand) : Ll.operand -> ins =
     3. follow the usual calling conventions - any stack arguments will still leave
     %rsp 16-byte aligned
 
+    TODO:
     4. after the call returns, in addition to freeing up the stack slots used by
     arguments, if there were an odd number of slots, also free the extra padding.
 
@@ -190,8 +193,35 @@ let arg_regs = [ Reg Rdi
                ; Reg R08
                ; Reg R09 ]
 
-let compile_call (ctxt : ctxt) (fop, fargs : Ll.operand * (ty * Ll.operand) list) : X86.ins list =
-  failwith "compile_call not implemented"
+exception Function_not_gid
+
+let compile_call (ctxt : ctxt) (uid : uid option) (fop, fargs : Ll.operand * (ty * Ll.operand) list) : X86.ins list =
+  let compile_operand = compile_operand ctxt in
+    (* Copy register args to stack. *)
+    ( compile_save_regs caller_saved )
+    @
+    ( fargs
+      |> List.mapi (fun i (_, farg) ->
+          if i < 6 then
+            [compile_operand (List.nth arg_regs i) farg]
+          else
+            [compile_operand (Reg Rax) farg; Pushq, [Reg Rax]])
+      |> List.rev
+      |> List.flatten )
+    @
+    ( match fop with
+      | Gid gid -> [Callq, [Imm (Lbl (Platform.mangle gid))]]
+      | _ -> raise Function_not_gid )
+    @
+    ( match uid with
+      | Some uid -> [Movq, [Reg Rax; lookup ctxt.layout uid]]
+      | None -> [] )
+    @
+    let reg_args_stack_size = (max (List.length fargs - 6) 0) * 8 in
+      [ Addq, [imm_of_int reg_args_stack_size; Reg Rsp] ]
+    @
+    ( compile_restore_regs caller_saved )
+
 
 
 (* compiling getelementptr (gep)  ------------------------------------------- *)
@@ -308,7 +338,7 @@ let compile_insn (ctxt : ctxt) ((uid : uid), (i : Ll.insn)) : X86.ins list =
     let size = size_ty ctxt.tdecls ty in
     let dest = lookup uid in
     [
-      Subq, [Imm (Lit (Int64.of_int size)); Reg Rsp];
+      Subq, [imm_of_int size; Reg Rsp];
       Movq, [Reg Rsp; dest]
     ]
 
@@ -345,14 +375,12 @@ let compile_insn (ctxt : ctxt) ((uid : uid), (i : Ll.insn)) : X86.ins list =
 
   (* TODO: error handling *)
   | Call (Void, fop, fargs) ->
-    compile_call ctxt (fop, fargs)
+    compile_call ctxt None (fop, fargs)
 
   (* TODO: error handling *)
   | Call (_, fop, fargs) ->
-    let dest = lookup uid in
-    (* Assume compile_call puts the return value in rax. *)
-    compile_call ctxt (fop, fargs)
-    @ [Movq, [Reg Rax; dest]]
+    (* compile_call puts the return value in dest. *)
+    compile_call ctxt (Some uid) (fop, fargs)
 
   | Bitcast (_, op, _) ->
     let dest = lookup uid in
@@ -363,7 +391,7 @@ let compile_insn (ctxt : ctxt) ((uid : uid), (i : Ll.insn)) : X86.ins list =
 
   | Gep (ty, op, path) ->
     let dest = lookup uid in
-    (* Assume compile_gep puts the result pointer in rax. *)
+    (* compile_gep puts the result pointer in rax. *)
     compile_gep ctxt (ty, op) path
     @ [Movq, [Reg Rax; dest]]
 
@@ -524,7 +552,7 @@ let compile_fdecl (tdecls : (tid * ty) list) (name : string) ({ f_param; f_cfg; 
     ; Movq, [Reg Rsp; Reg Rbp] ]
     @ (compile_save_regs arg_regs) @
     [ let local_stack_size = (List.length context.layout - List.length f_param) * 8 in
-      Subq, [Imm (Lit (Int64.of_int local_stack_size)); Reg Rsp] ]
+      Subq, [imm_of_int local_stack_size; Reg Rsp] ]
     @ compile_block name context entry_block
   )
   (* Labeled blocks. *)
